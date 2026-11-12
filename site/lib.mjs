@@ -59,14 +59,71 @@ export function discover(root, addedAt = new Map()) {
     t.questions.sort(byTitle);
     t.sections.sort((a, b) => a.name.localeCompare(b.name));
     for (const s of t.sections) s.questions.sort(byTitle);
-    t.ordered = [...t.questions, ...t.sections.flatMap(s => s.questions)];
-    t.count = t.ordered.length;
-    t.ordered.forEach((p, i) => {
-      p.prev = t.ordered[i - 1] || null;
-      p.next = t.ordered[i + 1] || null;
-    });
+    linkOrder(t);
   }
   return { topics, pages };
+}
+
+/** Flattens a topic's visible order and wires Prev/Next to follow it. */
+export function linkOrder(t) {
+  t.ordered = [...t.questions, ...t.sections.flatMap(s => s.questions)];
+  t.count = t.ordered.length;
+  t.ordered.forEach((p, i) => {
+    p.prev = t.ordered[i - 1] || null;
+    p.next = t.ordered[i + 1] || null;
+  });
+}
+
+const WIKI_ITEM = /^\s*(?:[-*+]\s+|\d+\.\s+)?\[(.+?)\]\((\S+?)\)/;
+
+/**
+ * Reads an upstream wiki topic page into [{ name, items: [{ label, path }] }].
+ * Headings start sections; any line that opens with a link to a repo .md is an item.
+ */
+export function parseWiki(markdown) {
+  const sections = [{ name: null, items: [] }];
+  for (const line of markdown.split('\n')) {
+    const h = line.match(/^#{1,4}\s+(.+?)\s*#*\s*$/);
+    if (h) { sections.push({ name: plain(h[1]), items: [] }); continue; }
+    const m = line.match(WIKI_ITEM);
+    if (!m) continue;
+    const r = resolveRepoPath(m[2], 'wiki.md');
+    if (r && /\.md$/i.test(r.path)) sections.at(-1).items.push({ label: plain(m[1]), path: r.path });
+  }
+  return sections.filter(s => s.items.length);
+}
+
+/**
+ * Reorders a topic to follow its wiki page. Questions the wiki doesn't mention
+ * go to a trailing "More questions" section; wiki links to missing files are dropped.
+ */
+export function applyWiki(topic, sections, bySrc) {
+  const mine = new Set(topic.ordered);
+  const used = new Set();
+  const out = [];
+  for (const s of sections) {
+    const questions = [];
+    for (const { label, path: src } of s.items) {
+      const p = bySrc.get(src);
+      if (!p || !mine.has(p) || used.has(p)) continue;
+      used.add(p);
+      p.label = label;
+      questions.push(p);
+    }
+    if (questions.length) out.push({ name: s.name, questions });
+  }
+  if (!used.size) return false;
+  const rest = topic.ordered.filter(p => !used.has(p));
+  topic.questions = out[0].name === null ? out.shift().questions : [];
+  for (const p of topic.questions) p.section = null;
+  topic.sections = out.map(s => {
+    const section = { name: s.name, slug: slugify(s.name), questions: s.questions };
+    for (const p of s.questions) p.section = section; // breadcrumbs follow the wiki grouping
+    return section;
+  });
+  if (rest.length) topic.sections.push({ name: 'More questions', slug: 'more', questions: rest });
+  linkOrder(topic);
+  return true;
 }
 
 function rank(name) {

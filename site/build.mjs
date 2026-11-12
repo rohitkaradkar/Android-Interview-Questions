@@ -4,7 +4,8 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import MarkdownIt from 'markdown-it';
 import { createHighlighter } from 'shiki';
-import { discover, resolveRepoPath, parseAddedLog } from './lib.mjs';
+import os from 'node:os';
+import { discover, resolveRepoPath, parseAddedLog, parseWiki, applyWiki } from './lib.mjs';
 
 const SITE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(SITE);
@@ -38,6 +39,30 @@ for (const { src, at } of added) addedAt.set(src, at);
 
 const { topics, pages } = discover(ROOT, addedAt);
 const bySrc = new Map(pages.map(p => [p.src, p]));
+
+// ---- wiki ordering -----------------------------------------------------------
+// Upstream's wiki lists each topic progressively (basics first, grouped by theme).
+// It lives in a separate git repo, so fetch it at build time; without it, topics stay alphabetical.
+
+function wikiDir() {
+  if (process.env.WIKI_DIR) return process.env.WIKI_DIR;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiq-wiki-'));
+  try {
+    execFileSync('git', ['clone', '--quiet', '--depth', '1', 'https://github.com/Kirchhoff-/Android-Interview-Questions.wiki.git', dir], { stdio: 'ignore', timeout: 60_000 });
+    return dir;
+  } catch {
+    console.warn('Wiki unavailable; topics fall back to alphabetical order.');
+    return null;
+  }
+}
+
+const wiki = wikiDir();
+const wikiOrdered = [];
+for (const t of wiki ? topics : []) {
+  const file = path.join(wiki, `${t.name.replace(/ /g, '-')}.md`);
+  if (fs.existsSync(file) && applyWiki(t, parseWiki(fs.readFileSync(file, 'utf8')), bySrc)) wikiOrdered.push(t.name);
+}
+const label = q => q.label ?? q.title;
 
 // ---- markdown ------------------------------------------------------------
 
@@ -145,7 +170,7 @@ ${extraHead}
 }
 
 function sideNav(topic, active) {
-  const item = q => `<li><a href="${href(q.url)}"${q === active ? ' aria-current="page"' : ''}>${esc(q.title)}</a></li>`;
+  const item = q => `<li><a href="${href(q.url)}"${q === active ? ' aria-current="page"' : ''}>${esc(label(q))}</a></li>`;
   return `<a class="side-topic" href="${href(topic.url)}">${esc(topic.name)} <span>${topic.count}</span></a>
 <ul>${topic.questions.map(item).join('')}</ul>
 ${topic.sections.map(s => `<h3>${esc(s.name)}</h3><ul>${s.questions.map(item).join('')}</ul>`).join('')}
@@ -162,7 +187,7 @@ function questionPage(p) {
   const crumbs = [`<a href="${href(p.topic.url)}">${esc(p.topic.name)}</a>`];
   if (p.section) crumbs.push(`<span>${esc(p.section.name)}</span>`);
   const pn = (q, rel) => q
-    ? `<a class="pn pn-${rel}" href="${href(q.url)}" rel="${rel}"><small>${rel === 'prev' ? '← Previous' : 'Next →'}</small><span>${esc(q.title)}</span></a>`
+    ? `<a class="pn pn-${rel}" href="${href(q.url)}" rel="${rel}"><small>${rel === 'prev' ? '← Previous' : 'Next →'}</small><span>${esc(label(q))}</span></a>`
     : '<span></span>';
   const body = `<article class="answer" data-pagefind-body data-pagefind-filter="topic:${esc(p.topic.name)}" data-question data-url="${esc(href(p.url))}" data-title="${esc(p.title)}" data-topic="${esc(p.topic.name)}">
 <nav class="crumbs" aria-label="Breadcrumb" data-pagefind-ignore>${crumbs.join('<span aria-hidden="true">›</span>')}</nav>
@@ -174,7 +199,7 @@ ${p.listed ? `<nav class="prevnext" aria-label="Previous and next">${pn(p.prev, 
 }
 
 function topicPage(t) {
-  const list = qs => `<ol class="qlist">${qs.map(q => `<li><a href="${href(q.url)}">${esc(q.title)}</a></li>`).join('')}</ol>`;
+  const list = qs => `<ol class="qlist">${qs.map(q => `<li><a href="${href(q.url)}">${esc(label(q))}</a></li>`).join('')}</ol>`;
   const body = `<div class="topic-head"><a class="back" href="${BASE}">All topics</a><h1>${esc(t.name)}</h1><p>${t.count} questions</p></div>
 ${t.questions.length ? list(t.questions) : ''}
 ${t.sections.map(s => `<h2 class="section-title">${esc(s.name)} <span>${s.questions.length}</span></h2>${list(s.questions)}`).join('')}`;
@@ -256,3 +281,4 @@ fs.copyFileSync(path.join(fonts, 'jetbrains-mono/files/jetbrains-mono-latin-wght
 fs.writeFileSync(path.join(OUT, '.nojekyll'), '');
 
 console.log(`Built ${pages.length} pages, ${topics.length} topics, ${media.size} images → ${path.relative(ROOT, OUT)}`);
+console.log(`Wiki order: ${wikiOrdered.join(', ') || 'none'}`);

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { slugify, titleOf, discover, resolveRepoPath, parseAddedLog } from './lib.mjs';
+import { slugify, titleOf, discover, resolveRepoPath, parseAddedLog, parseWiki, applyWiki } from './lib.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -72,4 +72,41 @@ test('discover against the real repo finds every topic and question once', () =>
   assert.equal(new Set(urls).size, urls.length, 'URLs are unique');
   assert.ok(urls.every(u => /^[a-z0-9/-]+\/$/.test(u)), 'URLs are clean slugs');
   assert.ok(!pages.some(p => p.src === 'README.md'));
+});
+
+test('parseWiki reads headings and bulleted, numbered, or bare link lines', () => {
+  const B = 'https://github.com/Kirchhoff-/Android-Interview-Questions/blob/master/';
+  const wiki = `Intro with a [doc link](https://example.com).
+- not a question
+[Two sum](${B}Coding%20Challenges/Two%20sum.md)
+## Basics
+- [What is **X**?](${B}Kotlin/What%20is%20X.md)
+1. [\`Gone\`](${B}Kotlin/Gone.md)
+## Empty
+- [external](https://kotlinlang.org)`;
+  assert.deepEqual(parseWiki(wiki), [
+    { name: null, items: [{ label: 'Two sum', path: 'Coding Challenges/Two sum.md' }] },
+    { name: 'Basics', items: [{ label: 'What is X?', path: 'Kotlin/What is X.md' }, { label: 'Gone', path: 'Kotlin/Gone.md' }] },
+  ]);
+});
+
+test('applyWiki follows wiki order, drops dead links, keeps unlisted questions at the end', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiq-'));
+  const put = (p, s) => { fs.mkdirSync(path.dirname(path.join(dir, p)), { recursive: true }); fs.writeFileSync(path.join(dir, p), s); };
+  for (const n of ['A', 'B', 'C', 'D']) put(`Kotlin/${n}.md`, `# ${n}`);
+  const { topics, pages } = discover(dir);
+  const bySrc = new Map(pages.map(p => [p.src, p]));
+  const t = topics[0];
+  const ok = applyWiki(t, [
+    { name: 'Basics', items: [{ label: 'What is C?', path: 'Kotlin/C.md' }, { label: 'dead', path: 'Kotlin/Gone.md' }] },
+    { name: 'Advanced', items: [{ label: 'A again', path: 'Kotlin/A.md' }, { label: 'C dup', path: 'Kotlin/C.md' }] },
+  ], bySrc);
+  assert.ok(ok);
+  assert.deepEqual(t.sections.map(s => [s.name, s.questions.map(q => q.title)]),
+    [['Basics', ['C']], ['Advanced', ['A']], ['More questions', ['B', 'D']]]);
+  assert.equal(bySrc.get('Kotlin/C.md').label, 'What is C?');
+  assert.equal(bySrc.get('Kotlin/C.md').section.name, 'Basics');
+  assert.equal(bySrc.get('Kotlin/C.md').next.title, 'A');
+  assert.equal(t.count, 4);
+  assert.equal(applyWiki(t, [{ name: 'X', items: [{ label: 'n', path: 'Other/Q.md' }] }], bySrc), false);
 });
