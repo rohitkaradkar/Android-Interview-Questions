@@ -47,6 +47,12 @@ jobs:
           npm test
           npm run build
 
+      # Checks the built pages, then drives them in the runner's preinstalled Chrome.
+      # A failure stops the deploy, so the live site stays on its last good build.
+      - name: Check site
+        working-directory: site
+        run: npm run check
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

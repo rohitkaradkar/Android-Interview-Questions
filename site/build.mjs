@@ -282,3 +282,4 @@ fs.writeFileSync(path.join(OUT, '.nojekyll'), '');
 
 console.log(`Built ${pages.length} pages, ${topics.length} topics, ${media.size} images → ${path.relative(ROOT, OUT)}`);
 console.log(`Wiki order: ${wikiOrdered.join(', ') || 'none'}`);
+write('build-info.json', JSON.stringify({ wiki: wiki ? 'fetched' : 'unavailable', wikiOrdered }));

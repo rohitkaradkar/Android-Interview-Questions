@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs && pagefind --site dist --quiet",
-    "test": "node --test",
+    "test": "node --test lib.test.mjs",
+    "check": "node --test --test-concurrency=1 \"checks/*.check.mjs\"",
     "serve": "node serve.mjs"
   },
   "dependencies": {
@@ -13,5 +14,8 @@
     "markdown-it": "15.0.3",
     "pagefind": "1.6.0",
     "shiki": "4.6.0"
+  },
+  "devDependencies": {
+    "puppeteer-core": "23.11.1"
   }
 }
